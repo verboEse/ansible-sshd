@@ -222,6 +222,17 @@ do not override match blocks as defined in the `sshd` dict. All of the sources
 will be reflected in the resulting configuration file. The use of
 `sshd_match_*` variant is deprecated and no longer recommended.
 
+**Important:** OpenSSH processes `Match` blocks in the order they appear in the
+configuration file. If a catch-all `Match all` block appears before more specific
+`Match` blocks (e.g., `Match User alice`, `Match Group admins`), the specific
+blocks will never be reached and their settings will not be applied.
+
+This role automatically ensures that any `Match all` blocks (where `Condition: "all"`)
+are rendered **after** all specific Match blocks in the generated configuration file.
+This guarantees that specific Match conditions are evaluated first, and the catch-all
+block only applies as a fallback. This ordering is applied regardless of the order you
+define the Match blocks in your playbook variables.
+
 #### sshd_backup
 
 When set to *false*, the original `sshd_config` file is not backed up. Default

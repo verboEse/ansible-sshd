@@ -1,0 +1,107 @@
+---
+- name: Test Match all blocks ordering
+  hosts: all
+  vars:
+    __sshd_test_backup_files:
+      - /etc/ssh/sshd_config
+      - /etc/ssh/sshd_config.d/00-ansible_system_role.conf
+  tasks:
+    - name: "Backup configuration files"
+      ansible.builtin.include_tasks: tasks/backup.yml
+
+    - name: Configure sshd with specific Match blocks and Match all
+      ansible.builtin.include_role:
+        name: ansible-sshd
+      vars:
+        # For Fedora containers, we need to make sure we have keys for sshd -T below
+        sshd_verify_hostkeys:
+          - /etc/ssh/ssh_host_rsa_key
+        sshd:
+          PermitRootLogin: "no"
+          Match:
+            - Condition: "User alice"
+              X11Forwarding: true
+              AllowTcpForwarding: true
+            - Condition: "User bob"
+              AllowTcpForwarding: false
+            - Condition: "all"
+              PasswordAuthentication: false
+        sshd_match_1:
+          Condition: "Group admins"
+          PermitRootLogin: true
+
+    - name: Verify the Match all block is last
+      tags: tests::verify
+      block:
+        - name: Flush handlers
+          ansible.builtin.meta: flush_handlers
+
+        - name: Print current configuration file
+          ansible.builtin.slurp:
+            src: "{{ main_sshd_config }}"
+          register: config
+
+        - name: Decode config content
+          ansible.builtin.set_fact:
+            config_lines: "{{ (config.content | b64decode).split('\n') }}"
+
+        - name: Find line numbers of Match blocks
+          ansible.builtin.set_fact:
+            match_alice_line: "{{ config_lines | map('regex_search', '^Match User alice') | select('string') | list | length > 0 }}"
+            match_bob_line: "{{ config_lines | map('regex_search', '^Match User bob') | select('string') | list | length > 0 }}"
+            match_admins_line: "{{ config_lines | map('regex_search', '^Match Group admins') | select('string') | list | length > 0 }}"
+            match_all_line: "{{ config_lines | map('regex_search', '^Match all') | select('string') | list | length > 0 }}"
+
+        - name: Get indices of Match blocks
+          ansible.builtin.set_fact:
+            alice_idx: "{{ config_lines | map('regex_search', '^Match User alice') | list | map('default', None) | list | map('ternary', range(0, config_lines | length), []) | flatten | list | first | default(99999) }}"
+            bob_idx: "{{ config_lines | map('regex_search', '^Match User bob') | list | map('default', None) | list | map('ternary', range(0, config_lines | length), []) | flatten | list | first | default(99999) }}"
+            admins_idx: "{{ config_lines | map('regex_search', '^Match Group admins') | list | map('default', None) | list | map('ternary', range(0, config_lines | length), []) | flatten | list | first | default(99999) }}"
+            all_idx: "{{ config_lines | map('regex_search', '^Match all') | list | map('default', None) | list | map('ternary', range(0, config_lines | length), []) | flatten | list | first | default(99999) }}"
+
+        - name: Debug Match block positions
+          ansible.builtin.debug:
+            msg: |
+              Match User alice: line {{ alice_idx }}
+              Match User bob: line {{ bob_idx }}
+              Match Group admins: line {{ admins_idx }}
+              Match all: line {{ all_idx }}
+
+        - name: Verify Match all is after specific Match blocks
+          ansible.builtin.assert:
+            that:
+              - match_alice_line
+              - match_bob_line
+              - match_admins_line
+              - match_all_line
+              - alice_idx | int < all_idx | int
+              - bob_idx | int < all_idx | int
+              - admins_idx | int < all_idx | int
+            fail_msg: "Match all block is not positioned after all specific Match blocks"
+
+        - name: Verify sshd configuration syntax
+          ansible.builtin.command: sshd -t
+          changed_when: false
+
+        - name: List effective configuration for alice
+          ansible.builtin.command: sshd -T -C user=alice,addr=127.0.0.1,host=example.com
+          register: alice_effective
+          changed_when: false
+
+        - name: List effective configuration for bob
+          ansible.builtin.command: sshd -T -C user=bob,addr=127.0.0.1,host=example.com
+          register: bob_effective
+          changed_when: false
+
+        - name: Check specific Match block options are effective
+          ansible.builtin.assert:
+            that:
+              - "'x11forwarding yes' in alice_effective.stdout"
+              - "'allowtcpforwarding yes' in alice_effective.stdout"
+              - "'passwordauthentication no' in alice_effective.stdout"
+              - "'allowtcpforwarding no' in bob_effective.stdout"
+              - "'passwordauthentication no' in bob_effective.stdout"
+            fail_msg: "Match block options are not correctly applied"
+
+    - name: "Restore configuration files"
+      ansible.builtin.include_tasks: tasks/restore.yml
