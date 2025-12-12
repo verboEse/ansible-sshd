@@ -262,36 +262,49 @@ Match {{ match["Condition"] }}
 {{ body_option("X11Forwarding",sshd_X11Forwarding) -}}
 {{ body_option("X11UseLocalhost",sshd_X11UseLocalhost) -}}
 {{ body_option("XAuthLocation",sshd_XAuthLocation) -}}
-{% if __sshd_config['Match'] is defined %}
-{{   match_iterate_block(__sshd_config['Match']) -}}
-{% endif %}
-{% if sshd_match is defined %}
-{{   match_iterate_block(sshd_match) -}}
-{% endif %}
-{% if sshd_match_1 is defined %}
-{{ match_block(sshd_match_1) -}}
-{% endif %}
-{% if sshd_match_2 is defined %}
-{{ match_block(sshd_match_2) -}}
-{% endif %}
-{% if sshd_match_3 is defined %}
-{{ match_block(sshd_match_3) -}}
-{% endif %}
-{% if sshd_match_4 is defined %}
-{{ match_block(sshd_match_4) -}}
-{% endif %}
-{% if sshd_match_5 is defined %}
-{{ match_block(sshd_match_5) -}}
-{% endif %}
-{% if sshd_match_6 is defined %}
-{{ match_block(sshd_match_6) -}}
-{% endif %}
-{% if sshd_match_7 is defined %}
-{{ match_block(sshd_match_7) -}}
-{% endif %}
-{% if sshd_match_8 is defined %}
-{{ match_block(sshd_match_8) -}}
-{% endif %}
-{% if sshd_match_9 is defined %}
-{{ match_block(sshd_match_9) -}}
-{% endif %}
+{# Collect all Match blocks and separate catch-all from specific #}
+{%- set specific_matches = [] -%}
+{%- set catchall_matches = [] -%}
+{# Process __sshd_config['Match'] and sshd_match #}
+{%- for match_source in [__sshd_config.get('Match'), sshd_match] -%}
+{%  if match_source is defined and match_source %}
+{%    if match_source | type_debug == "list" %}
+{%      for match in match_source %}
+{%        set condition = match.get('Condition', '') | string | lower | trim %}
+{%        if condition == 'all' %}
+{%          set _ = catchall_matches.append(match) %}
+{%        else %}
+{%          set _ = specific_matches.append(match) %}
+{%        endif %}
+{%      endfor %}
+{%    else %}
+{%      set condition = match_source.get('Condition', '') | string | lower | trim %}
+{%      if condition == 'all' %}
+{%        set _ = catchall_matches.append(match_source) %}
+{%      else %}
+{%        set _ = specific_matches.append(match_source) %}
+{%      endif %}
+{%    endif %}
+{%  endif %}
+{%- endfor -%}
+{# Process sshd_match_1 through sshd_match_9 #}
+{%- for i in range(1, 10) -%}
+{%  set match_var_name = 'sshd_match_' ~ i %}
+{%  if match_var_name in vars and vars[match_var_name] is defined %}
+{%    set match = vars[match_var_name] %}
+{%    set condition = match.get('Condition', '') | string | lower | trim %}
+{%    if condition == 'all' %}
+{%      set _ = catchall_matches.append(match) %}
+{%    else %}
+{%      set _ = specific_matches.append(match) %}
+{%    endif %}
+{%  endif %}
+{%- endfor -%}
+{# Render specific Match blocks first #}
+{%- for match in specific_matches %}
+{{   match_block(match) -}}
+{%- endfor -%}
+{# Render catch-all Match blocks last #}
+{%- for match in catchall_matches %}
+{{   match_block(match) -}}
+{%- endfor %}
